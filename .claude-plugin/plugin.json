@@ -1,0 +1,21 @@
+{
+  "name": "web-feedback",
+  "version": "1.0.0",
+  "description": "In-browser visual feedback loop for any web app in development. Shift+click any spot to leave a comment; the widget screenshots the page (snapdom — handles oklch/Tailwind v4), pins the click point, and captures recent console logs + network requests. Everything lands in a local SQLite store Claude reads to fix each item and mark it resolved.",
+  "author": {
+    "name": "7th Pillar",
+    "email": "rashin@7thpillar.com"
+  },
+  "homepage": "https://github.com/7th-Pillar-Infotech/web-feedback",
+  "repository": "https://github.com/7th-Pillar-Infotech/web-feedback",
+  "license": "MIT",
+  "keywords": [
+    "feedback",
+    "qa",
+    "screenshot",
+    "annotations",
+    "debugging",
+    "web",
+    "developer-tools"
+  ]
+}

@@ -1,0 +1,12 @@
+# Installed dependencies — restored on first run by the skill (ensure-running.sh).
+skills/web-feedback/server/node_modules/
+
+# Runtime data now lives in ~/.web-feedback, but ignore any legacy in-tree copies.
+skills/web-feedback/server/feedback.db
+skills/web-feedback/server/feedback.db-shm
+skills/web-feedback/server/feedback.db-wal
+skills/web-feedback/server/screenshots/
+skills/web-feedback/server/collector.log
+
+# OS / editor noise.
+.DS_Store
