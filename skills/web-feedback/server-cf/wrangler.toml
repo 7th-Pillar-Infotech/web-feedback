@@ -1,0 +1,21 @@
+name = "web-feedback-collector"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+# D1 holds the feedback rows. Create it once, then paste the id here:
+#   npx wrangler d1 create web-feedback
+[[d1_databases]]
+binding = "DB"
+database_name = "web-feedback"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# R2 holds the screenshots. Strongly recommended — without it, captures larger
+# than ~700kB are dropped (they'd blow D1's per-value limit).
+# R2 must be enabled once per account in the dashboard (R2 → Enable), then:
+#   npx wrangler r2 bucket create web-feedback-shots
+[[r2_buckets]]
+binding = "SHOTS"
+bucket_name = "web-feedback-shots"
+
+# Auth is a secret, not a var — set it with:
+#   npx wrangler secret put FEEDBACK_TOKEN

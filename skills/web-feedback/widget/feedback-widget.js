@@ -30,18 +30,34 @@
     Array.from(document.getElementsByTagName('script')).find((s) =>
       /feedback-widget\.js/.test(s.src)
     );
-  const scriptOrigin = currentScript ? new URL(currentScript.src).origin : 'http://localhost:4765';
+  const scriptUrl = currentScript ? new URL(currentScript.src, location.href) : null;
+  const scriptOrigin = scriptUrl ? scriptUrl.origin : 'http://localhost:4765';
+  // The collector may be mounted under a path (e.g. https://example.com/feedback/),
+  // so derive the base from the script's own URL, not just its origin.
+  const scriptBase = scriptUrl
+    ? scriptUrl.href.replace(/\/feedback-widget\.js.*$/, '') || scriptOrigin
+    : scriptOrigin;
+  // Anything can also be set on the script tag itself, which is all a remote
+  // (VPS / Cloudflare) deployment needs — no inline config script required:
+  //   <script src="https://feedback.example.com/feedback-widget.js?project=admin-app&token=…">
+  const scriptParams = scriptUrl ? scriptUrl.searchParams : new URLSearchParams();
+
+  const serverBase = scriptParams.get('server') || scriptBase;
 
   const CONFIG = Object.assign(
     {
-      server: scriptOrigin, // collector base URL
-      project: location.host || 'app', // grouping key for the SQLite `project` column
+      server: serverBase, // collector base URL
+      // Shared secret for a collector that isn't on localhost. Sent as the
+      // X-Feedback-Token header; the collector only enforces it when it has one.
+      token: scriptParams.get('token') || '',
+      project: scriptParams.get('project') || location.host || 'app', // grouping key for the `project` column
       // Capture engines, all served by the collector (works even under a strict
       // app CSP that would block a CDN). snapdom is primary because it renders
       // via the browser, so modern CSS colors (oklch/oklab/lab/color()) — which
       // html2canvas 1.4.1 throws on — just work. html2canvas is the fallback.
-      snapdom: scriptOrigin + '/vendor/snapdom.js',
-      html2canvas: scriptOrigin + '/vendor/html2canvas.js',
+      snapdom: serverBase + '/vendor/snapdom.js',
+      snapdomFallback: 'https://cdn.jsdelivr.net/npm/@zumer/snapdom/dist/snapdom.min.js',
+      html2canvas: serverBase + '/vendor/html2canvas.js',
       html2canvasFallback:
         'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
       maxConsoleLogs: 200, // ring-buffer caps for the debug capture
@@ -199,17 +215,44 @@
        clickable even when the app disables the page with body{pointer-events:none}
        while a modal is open (the Radix/Vaul/Headless UI pattern) — that value
        inherits, so without this our own Submit button would be dead. */
+    /* Collapsed by default to a small chip so it barely intrudes on the page.
+       Hover (or tap, for touch) expands it to reveal the hint and the controls. */
     .wf-badge{position:fixed;right:16px;bottom:16px;z-index:2147483000;
       background:#4338ca;color:#fff;font:600 13px/1 system-ui,sans-serif;
-      padding:10px 14px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.25);
-      cursor:default;display:flex;align-items:center;gap:8px;user-select:none;
-      pointer-events:auto}
-    .wf-badge b{background:rgba(255,255,255,.22);border-radius:999px;padding:1px 7px}
-    .wf-badge small{opacity:.85;font-weight:500}
+      padding:7px 9px;border-radius:999px;box-shadow:0 3px 10px rgba(0,0,0,.22);
+      cursor:default;display:flex;align-items:center;gap:6px;user-select:none;
+      pointer-events:auto;opacity:.85;
+      transition:opacity .15s ease,padding .15s ease,box-shadow .15s ease}
+    .wf-badge:hover,.wf-badge.wf-open{opacity:1;padding:8px 12px;
+      box-shadow:0 4px 14px rgba(0,0,0,.28)}
+    .wf-badge b{background:rgba(255,255,255,.22);border-radius:999px;padding:1px 6px;
+      min-width:8px;text-align:center}
+    /* The expanding half. max-width (not display) so it animates, and
+       overflow:hidden keeps it from reserving space while collapsed. */
+    .wf-badge .wf-extra{display:flex;align-items:center;gap:8px;overflow:hidden;
+      max-width:0;opacity:0;transition:max-width .18s ease,opacity .14s ease}
+    .wf-badge:hover .wf-extra,.wf-badge.wf-open .wf-extra{max-width:340px;opacity:1}
+    .wf-badge small{opacity:.85;font-weight:500;white-space:nowrap}
+    /* Badge controls: toggle marker visibility + open the issues panel. They live
+       inside the draggable badge, so they stop the drag from starting (see
+       makeDraggable) and keep pointer-events:auto to survive app modals. */
+    .wf-badge .wf-badge-btn{background:rgba(255,255,255,.18);border:0;color:#fff;
+      font:600 13px/1 system-ui,sans-serif;border-radius:7px;padding:5px 7px;cursor:pointer;
+      pointer-events:auto;display:inline-flex;align-items:center;gap:4px}
+    .wf-badge .wf-badge-btn:hover{background:rgba(255,255,255,.32)}
+    .wf-badge .wf-badge-btn.off{opacity:.55}
+    .wf-badge .wf-sep{width:1px;height:18px;background:rgba(255,255,255,.25)}
     .wf-marker{position:absolute;z-index:2147482000;width:26px;height:26px;
       margin:-13px 0 0 -13px;border-radius:50%;background:#e11d48;color:#fff;
       font:700 13px/26px system-ui,sans-serif;text-align:center;cursor:pointer;
       box-shadow:0 2px 6px rgba(0,0,0,.4);border:2px solid #fff;pointer-events:auto}
+    /* Resolved feedback keeps its pin exactly where it was left — it just turns
+       green — so a human can verify the fix in place before the item is retired. */
+    .wf-marker.wf-done{background:#16a34a}
+    .wf-marker.wf-flash{animation:wf-flash 1.2s ease-out 2}
+    @keyframes wf-flash{0%{box-shadow:0 0 0 0 rgba(67,56,202,.9);transform:scale(1)}
+      50%{box-shadow:0 0 0 14px rgba(67,56,202,0);transform:scale(1.35)}
+      100%{box-shadow:0 0 0 0 rgba(67,56,202,0);transform:scale(1)}}
     /* Rendered as a native <dialog> opened with showModal() so it sits in the
        browser top layer — above any app modal/sidebar — and makes the rest of
        the page inert, which stops focus-trap libraries from stealing focus. */
@@ -235,6 +278,43 @@
     .wf-hint{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);
       z-index:2147483000;background:rgba(17,17,17,.9);color:#fff;font:12px system-ui,sans-serif;
       padding:6px 12px;border-radius:6px;pointer-events:none;opacity:0;transition:opacity .2s}
+    /* Issues side panel. A plain fixed element (not a modal <dialog>) so the app
+       stays usable underneath while the list is open — you can scroll the page and
+       click pins with the panel visible. */
+    .wf-panel{position:fixed;top:0;right:0;bottom:0;width:360px;max-width:92vw;
+      z-index:2147483500;background:#fff;color:#111;font:13px system-ui,sans-serif;
+      box-shadow:-6px 0 24px rgba(0,0,0,.22);display:flex;flex-direction:column;
+      pointer-events:auto;transform:translateX(100%);transition:transform .18s ease-out}
+    .wf-panel.open{transform:translateX(0)}
+    .wf-panel header{background:#4338ca;color:#fff;padding:10px 12px;display:flex;
+      align-items:center;gap:8px;font-weight:600;flex:0 0 auto}
+    .wf-panel header .wf-spacer{flex:1}
+    .wf-panel header button{background:rgba(255,255,255,.18);border:0;color:#fff;
+      font:600 13px system-ui,sans-serif;border-radius:6px;padding:4px 8px;cursor:pointer}
+    .wf-panel header button:hover{background:rgba(255,255,255,.32)}
+    .wf-filters{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid #eee;flex:0 0 auto}
+    .wf-filters button{flex:1;background:#f1f1f4;border:0;color:#444;border-radius:7px;
+      padding:6px 8px;font:600 12px system-ui,sans-serif;cursor:pointer}
+    .wf-filters button.on{background:#4338ca;color:#fff}
+    .wf-list{flex:1;overflow:auto;padding:6px 0}
+    .wf-group{padding:10px 12px 4px;font:600 11px system-ui,sans-serif;color:#6b7280;
+      text-transform:uppercase;letter-spacing:.04em;word-break:break-all}
+    .wf-group .wf-here{color:#4338ca}
+    .wf-item{display:flex;gap:9px;padding:8px 12px;cursor:pointer;align-items:flex-start;
+      border-left:3px solid transparent}
+    .wf-item:hover{background:#f6f6fb;border-left-color:#4338ca}
+    .wf-item .wf-num{flex:0 0 auto;width:22px;height:22px;border-radius:50%;background:#e11d48;
+      color:#fff;font:700 11px/22px system-ui,sans-serif;text-align:center}
+    .wf-item.done .wf-num{background:#16a34a}
+    .wf-item.done .wf-text{color:#6b7280;text-decoration:line-through}
+    .wf-item .wf-body{flex:1;min-width:0}
+    .wf-item .wf-text{white-space:pre-wrap;word-break:break-word;line-height:1.35}
+    .wf-item .wf-meta{color:#8b8b96;font-size:11px;margin-top:3px;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .wf-item .wf-act{flex:0 0 auto;background:#f1f1f4;border:0;border-radius:6px;
+      padding:4px 7px;font-size:12px;cursor:pointer;color:#333}
+    .wf-item .wf-act:hover{background:#e4e4ea}
+    .wf-empty{padding:24px 16px;text-align:center;color:#8b8b96}
     .wf-toast{position:fixed;right:16px;bottom:64px;z-index:2147483600;
       background:#065f46;color:#fff;font:600 13px system-ui,sans-serif;padding:9px 14px;
       border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.3);opacity:0;transform:translateY(6px);
@@ -249,22 +329,95 @@
   const badge = document.createElement('div');
   badge.className = 'wf-badge';
   badge.setAttribute('data-html2canvas-ignore', 'true');
-  badge.title = 'Drag to move';
-  badge.innerHTML = `💬 <b>0</b> <small>Shift+click to add feedback</small>`;
+  badge.title = 'Tap to expand · drag to move';
+  badge.innerHTML =
+    `💬 <b>0</b>` +
+    `<span class="wf-extra">` +
+    `<small>Shift+click to add feedback</small>` +
+    `<span class="wf-sep"></span>` +
+    `<button class="wf-badge-btn wf-toggle" type="button" title="Hide/show markers on this page">👁</button>` +
+    `<button class="wf-badge-btn wf-open-panel" type="button" title="Open the issues list">☰</button>` +
+    `</span>`;
 
   // The badge sits over the bottom-right corner, which can cover app buttons.
   // Make it draggable (and remember where it was left) so it can be moved aside.
   // NOTE: declared before ready() runs — ready() is invoked synchronously below
   // and calls restoreBadgePosition(), which reads this key (avoids a TDZ error).
   const BADGE_POS_KEY = 'wf-badge-pos';
+  const MARKERS_HIDDEN_KEY = 'wf-markers-hidden';
+  const PANEL_FILTER_KEY = 'wf-panel-filter';
+  const PANEL_OPEN_KEY = 'wf-panel-open';
+  // Set by the panel before a cross-page jump; read back after the new page loads
+  // so the target pin can be flashed once we're actually there.
+  const FLASH_KEY = 'wf-flash-id';
+
+  // All feedback for this project (both statuses), refreshed from the collector.
+  // Drives the badge counts, the on-page pins, and the side panel list.
+  let items = [];
+  let markersHidden = false;
+  let panelFilter = 'open';
+  let panelOpen = false;
+  // NOTE: both are read during ready(), which runs synchronously further down —
+  // so they must be initialised here, not next to the panel code below.
+  try {
+    markersHidden = localStorage.getItem(MARKERS_HIDDEN_KEY) === '1';
+    panelOpen = localStorage.getItem(PANEL_OPEN_KEY) === '1';
+    const savedFilter = localStorage.getItem(PANEL_FILTER_KEY);
+    if (savedFilter === 'open' || savedFilter === 'resolved' || savedFilter === 'all') {
+      panelFilter = savedFilter;
+    }
+  } catch { /* ignore */ }
+
+  const panel = document.createElement('div');
+  panel.className = 'wf-panel';
+  panel.setAttribute('data-html2canvas-ignore', 'true');
 
   function ready() {
     document.head.appendChild(style);
     document.body.appendChild(markerLayer);
     document.body.appendChild(badge);
+    document.body.appendChild(panel);
+    buildPanel();
     restoreBadgePosition();
     makeDraggable(badge);
+    applyMarkerVisibility();
+    badge.querySelector('.wf-toggle').addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMarkersHidden(!markersHidden);
+    });
+    badge.querySelector('.wf-open-panel').addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
+    // Tapping anywhere else collapses the badge again (touch has no "mouse out").
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (!(e.target.closest && e.target.closest('.wf-badge'))) badge.classList.remove('wf-open');
+      },
+      true
+    );
+    if (panelOpen) togglePanel(true); // restore the list across navigations
     refresh();
+  }
+
+  // Markers hide/show — the pins can cover the very UI you want to look at, so
+  // this is a first-class toggle (and it is remembered across reloads).
+  function applyMarkerVisibility() {
+    markerLayer.style.display = markersHidden ? 'none' : '';
+    const btn = badge.querySelector('.wf-toggle');
+    if (btn) {
+      btn.textContent = markersHidden ? '🙈' : '👁';
+      btn.classList.toggle('off', markersHidden);
+      btn.title = markersHidden ? 'Show markers on this page' : 'Hide markers on this page';
+    }
+  }
+
+  function setMarkersHidden(hidden) {
+    markersHidden = hidden;
+    try { localStorage.setItem(MARKERS_HIDDEN_KEY, hidden ? '1' : '0'); } catch { /* ignore */ }
+    applyMarkerVisibility();
+    toast(hidden ? 'Markers hidden' : 'Markers shown');
   }
   if (document.body) ready();
   else document.addEventListener('DOMContentLoaded', ready);
@@ -298,6 +451,9 @@
     el.style.touchAction = 'none';
 
     el.addEventListener('pointerdown', (e) => {
+      // Don't start a drag from the badge's own buttons — preventDefault() here
+      // would swallow their click.
+      if (e.target.closest && e.target.closest('.wf-badge-btn')) return;
       dragging = true;
       moved = false;
       const r = el.getBoundingClientRect();
@@ -334,6 +490,10 @@
             JSON.stringify({ x: parseInt(el.style.left, 10), y: parseInt(el.style.top, 10) })
           );
         } catch { /* ignore */ }
+      } else {
+        // A press that didn't drag is a tap: expand/collapse. Touch devices have
+        // no hover, so this is the only way in for them.
+        el.classList.toggle('wf-open');
       }
     }
     el.addEventListener('pointerup', end);
@@ -358,22 +518,80 @@
 
   let lastUrl = normalizeUrl(location.href);
 
-  // Fetch project feedback: seed `count` for numbering AND (re)draw only the pins
-  // that belong to the current URL. Clears any pins from a previous route first.
+  // Fetch project feedback: seed `count` for numbering, cache every item for the
+  // side panel, AND (re)draw the pins that belong to the current URL. Resolved
+  // items keep their pin — it just turns green — so a human can verify the fix
+  // where it was reported instead of hunting for a vanished marker.
   function refresh() {
-    markerLayer.replaceChildren(); // drop pins from the page we may have left
-    fetch(CONFIG.server + '/feedback?project=' + encodeURIComponent(CONFIG.project) + '&limit=1000')
+    return api('/feedback?project=' + encodeURIComponent(CONFIG.project) + '&limit=1000')
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data || !data.feedback) return;
-        count = data.feedback.reduce((m, f) => Math.max(m, f.number || 0), 0);
-        badge.querySelector('b').textContent = count;
-        const here = normalizeUrl(location.href);
-        data.feedback
-          .filter((f) => f.status === 'open' && normalizeUrl(f.url) === here)
-          .forEach((f) => placeMarker({ id: f.id, number: f.number, text: f.text, x: f.page_x, y: f.page_y }));
+        items = data.feedback.slice().sort((a, b) => (a.number || 0) - (b.number || 0));
+        count = items.reduce((m, f) => Math.max(m, f.number || 0), 0);
+        renderMarkers();
+        renderPanel();
       })
       .catch(() => {});
+  }
+
+  // (Re)draw pins for the current URL from the cached `items`.
+  function renderMarkers() {
+    markerLayer.replaceChildren(); // drop pins from the page we may have left
+    const here = normalizeUrl(location.href);
+    items
+      .filter((f) => normalizeUrl(f.url) === here)
+      .forEach((f) =>
+        placeMarker({
+          id: f.id,
+          number: f.number,
+          text: f.text,
+          x: f.page_x,
+          y: f.page_y,
+          status: f.status,
+          note: f.resolution_note,
+        })
+      );
+    updateBadgeCount();
+    flashPending();
+  }
+
+  function updateBadgeCount() {
+    const open = items.filter((f) => f.status === 'open').length;
+    badge.querySelector('b').textContent = open;
+    badge.querySelector('small').textContent =
+      items.length ? `${open} open · ${items.length} total` : 'Shift+click to add feedback';
+  }
+
+  // A cross-page jump from the panel stores the target id; once that page has
+  // rendered its pins, flash the one we came for.
+  function flashPending() {
+    let id = null;
+    try { id = sessionStorage.getItem(FLASH_KEY); } catch { /* ignore */ }
+    if (!id) return;
+    try { sessionStorage.removeItem(FLASH_KEY); } catch { /* ignore */ }
+    focusMarker(Number(id));
+  }
+
+  // Scroll a pin into view and flash it. Unhides markers first — a pin you asked
+  // to be taken to should never be invisible on arrival.
+  function focusMarker(id) {
+    const el = markerLayer.querySelector(`.wf-marker[data-wf-id="${id}"]`);
+    if (!el) return false;
+    if (markersHidden) setMarkersHidden(false);
+    const top = parseFloat(el.style.top) || 0;
+    const left = parseFloat(el.style.left) || 0;
+    window.scrollTo({
+      top: Math.max(0, top - window.innerHeight / 2),
+      left: Math.max(0, left - window.innerWidth / 2),
+      behavior: 'smooth',
+    });
+    el.classList.remove('wf-flash');
+    // reflow so the animation restarts even if it was just applied
+    void el.offsetWidth;
+    el.classList.add('wf-flash');
+    setTimeout(() => el.classList.remove('wf-flash'), 2600);
+    return true;
   }
 
   // Re-render when the URL changes without a full reload (SPA routing). We patch
@@ -382,6 +600,7 @@
     const now = normalizeUrl(location.href);
     if (now === lastUrl) return;
     lastUrl = now;
+    markerLayer.replaceChildren(); // drop the old route's pins immediately
     refresh();
   }
   ['pushState', 'replaceState'].forEach((m) => {
@@ -399,6 +618,16 @@
   window.addEventListener('hashchange', onUrlMaybeChanged);
 
   // ---- helpers ------------------------------------------------------------
+  // Every collector call goes through here so the shared token (if any) is
+  // attached consistently. Uses the page's original fetch — our own patched
+  // fetch skips collector URLs anyway, but this keeps it explicit.
+  function api(path, opts) {
+    const o = Object.assign({}, opts);
+    o.headers = Object.assign({}, o.headers);
+    if (CONFIG.token) o.headers['X-Feedback-Token'] = CONFIG.token;
+    return fetch(CONFIG.server + path, o);
+  }
+
   function cssSelector(el) {
     if (!(el instanceof Element)) return '';
     const parts = [];
@@ -441,7 +670,12 @@
   let captureLoadError = null;
   async function loadCapturer() {
     if (window.snapdom) return { engine: 'snapdom', lib: window.snapdom };
-    const snap = await loadScript(CONFIG.snapdom, () => window.snapdom);
+    let snap = await loadScript(CONFIG.snapdom, () => window.snapdom);
+    // A remote collector may not bundle the vendor libs (the Cloudflare build
+    // does, but a slimmed-down deployment might not) — fall back to the CDN.
+    if (!snap && CONFIG.snapdomFallback) {
+      snap = await loadScript(CONFIG.snapdomFallback, () => window.snapdom);
+    }
     if (snap) return { engine: 'snapdom', lib: snap };
 
     if (window.html2canvas) return { engine: 'html2canvas', lib: window.html2canvas };
@@ -496,6 +730,20 @@
     ctx.fillText(String(number), cx, cy);
   }
 
+  // Run fn() with every widget-owned node hidden, then restore them exactly as
+  // they were (even if fn throws). Everything the widget adds carries
+  // data-html2canvas-ignore, so that attribute is the selector.
+  async function withWidgetHidden(fn) {
+    const nodes = Array.from(document.querySelectorAll('[data-html2canvas-ignore]'));
+    const prev = nodes.map((n) => n.style.display);
+    nodes.forEach((n) => { n.style.display = 'none'; });
+    try {
+      return await fn();
+    } finally {
+      nodes.forEach((n, i) => { n.style.display = prev[i]; });
+    }
+  }
+
   // Screenshot the full page and draw a numbered pin at the click point.
   // Returns { dataUrl, error } — error is a human-readable reason on failure so
   // the miss is never silent (the feedback still records without a screenshot).
@@ -508,12 +756,15 @@
       let canvas;
       if (cap.engine === 'snapdom') {
         // snapdom renders via the browser (oklch/oklab/lab/color() all work).
-        // Exclude the widget's own DOM so it never appears in the shot.
-        canvas = await cap.lib.toCanvas(de, {
-          backgroundColor: opaqueBackground(),
-          filter: (el) => !(el.nodeType === 1 && el.hasAttribute && el.hasAttribute('data-html2canvas-ignore')),
-          exclude: ['[data-html2canvas-ignore]'],
-        });
+        //
+        // The widget's own DOM is kept out of the shot by hiding it for the
+        // duration of the capture, NOT via snapdom's `filter`/`exclude` options:
+        // passing either of those produces an entirely blank canvas (verified on
+        // a real app — content present without them, zero content with them).
+        // Hiding is also engine-agnostic, so it can't rot with a snapdom upgrade.
+        canvas = await withWidgetHidden(() =>
+          cap.lib.toCanvas(de, { backgroundColor: opaqueBackground() })
+        );
       } else {
         canvas = await cap.lib(de, {
           useCORS: true,
@@ -537,15 +788,17 @@
     }
   }
 
-  // pin: { id, number, text, x, y }  (x/y are page coordinates)
+  // pin: { id, number, text, x, y, status, note }  (x/y are page coordinates)
   function placeMarker(pin) {
+    const done = pin.status === 'resolved';
     const m = document.createElement('div');
-    m.className = 'wf-marker';
+    m.className = 'wf-marker' + (done ? ' wf-done' : '');
     m.setAttribute('data-html2canvas-ignore', 'true');
+    m.dataset.wfId = pin.id;
     m.style.left = pin.x + 'px';
     m.style.top = pin.y + 'px';
     m.textContent = pin.number;
-    m.title = `#${pin.number}: ${pin.text}\n(click to edit, resolve, or delete)`;
+    m.title = markerTitle(pin);
     // Keep pin interactions from reaching the host app's document handlers
     // (e.g. click-outside-to-close), same as the dialogs.
     ['pointerdown', 'mousedown', 'touchstart'].forEach((t) =>
@@ -559,9 +812,37 @@
     markerLayer.appendChild(m);
   }
 
-  // Click an existing pin to view its text and edit / resolve / delete it.
+  function markerTitle(pin) {
+    const done = pin.status === 'resolved';
+    return (
+      `#${pin.number}: ${pin.text}` +
+      (done ? `\n✔ Resolved${pin.note ? ' — ' + pin.note : ''}` : '') +
+      `\n(click to edit, ${done ? 'reopen' : 'resolve'}, or delete)`
+    );
+  }
+
+  // Change an item's status. Resolved items stay on the page (green pin) so they
+  // can be verified before being retired, so this repaints rather than removes.
+  async function setStatus(id, resolve, note) {
+    // /reopen takes no body — the collector doesn't read one on that route.
+    const r = await api(
+      '/feedback/' + id + (resolve ? '/resolve' : '/reopen'),
+      resolve
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ note: note || 'Resolved from widget' }),
+          }
+        : { method: 'POST' }
+    );
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    await refresh();
+  }
+
+  // Click an existing pin to view its text and edit / resolve / reopen / delete it.
   function openMarkerDetail(pin, markerEl) {
     closePop();
+    const done = pin.status === 'resolved';
     const pop = document.createElement('dialog');
     pop.className = 'wf-pop';
     pop.setAttribute('data-html2canvas-ignore', 'true');
@@ -572,12 +853,12 @@
     pop.style.left = Math.max(8, Math.min(vx, vw - 288)) + 'px';
     pop.style.top = Math.max(8, Math.min(vy + 8, vh - 240)) + 'px';
     pop.innerHTML = `
-      <header><span>Feedback #${pin.number}</span><span style="cursor:pointer" data-wf-x>✕</span></header>
+      <header><span>Feedback #${pin.number}${done ? ' ✔ resolved' : ''}</span><span style="cursor:pointer" data-wf-x>✕</span></header>
       <textarea autofocus></textarea>
       <footer>
         <button class="wf-delete" type="button">Delete</button>
         <span class="wf-spacer"></span>
-        <button class="wf-resolve" type="button">Resolve</button>
+        <button class="wf-resolve" type="button">${done ? 'Reopen' : 'Resolve'}</button>
         <button class="wf-submit wf-save" type="button">Save</button>
       </footer>`;
     showDialog(pop);
@@ -591,16 +872,17 @@
       const text = textarea.value.trim();
       if (!text) { textarea.focus(); return; }
       try {
-        const r = await fetch(CONFIG.server + '/feedback/' + pin.id, {
+        const r = await api('/feedback/' + pin.id, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text }),
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         pin.text = text;
-        markerEl.title = `#${pin.number}: ${text}\n(click to edit, resolve, or delete)`;
+        markerEl.title = markerTitle(pin);
         toast(`Feedback #${pin.number} updated`);
         closePop();
+        refresh();
       } catch (err) {
         toast('Update failed — is the collector running?');
         console.warn('[web-feedback] edit failed:', err);
@@ -609,11 +891,12 @@
 
     pop.querySelector('.wf-delete').onclick = async () => {
       try {
-        const r = await fetch(CONFIG.server + '/feedback/' + pin.id, { method: 'DELETE' });
+        const r = await api('/feedback/' + pin.id, { method: 'DELETE' });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         markerEl.remove();
         toast(`Feedback #${pin.number} deleted`);
         closePop();
+        refresh();
       } catch (err) {
         toast('Delete failed — is the collector running?');
         console.warn('[web-feedback] delete failed:', err);
@@ -622,18 +905,12 @@
 
     pop.querySelector('.wf-resolve').onclick = async () => {
       try {
-        const r = await fetch(CONFIG.server + '/feedback/' + pin.id + '/resolve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ note: 'Resolved from widget' }),
-        });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        markerEl.remove(); // resolved pins are no longer shown
-        toast(`Feedback #${pin.number} resolved`);
+        await setStatus(pin.id, !done);
+        toast(`Feedback #${pin.number} ${done ? 'reopened' : 'resolved — pin stays green for verification'}`);
         closePop();
       } catch (err) {
-        toast('Resolve failed — is the collector running?');
-        console.warn('[web-feedback] resolve failed:', err);
+        toast((done ? 'Reopen' : 'Resolve') + ' failed — is the collector running?');
+        console.warn('[web-feedback] status change failed:', err);
       }
     };
   }
@@ -649,6 +926,154 @@
       t.classList.remove('show');
       setTimeout(() => t.remove(), 250);
     }, 2600);
+  }
+
+  // ---- issues side panel --------------------------------------------------
+  // Lists every item for the project, grouped by the page it was left on.
+  // Clicking one takes you to it: same page → scroll to the pin and flash it;
+  // another page → navigate there, then flash the pin once it renders.
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+    );
+  }
+
+  function shortPath(u) {
+    try { const x = new URL(u, location.href); return (x.pathname + x.search) || '/'; } catch { return u; }
+  }
+
+  function timeAgo(iso) {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return '';
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return 'just now';
+    const m = Math.round(s / 60);
+    if (m < 60) return m + 'm ago';
+    const h = Math.round(m / 60);
+    if (h < 24) return h + 'h ago';
+    return Math.round(h / 24) + 'd ago';
+  }
+
+  function buildPanel() {
+    panel.innerHTML = `
+      <header>
+        <span>Feedback</span>
+        <span class="wf-spacer"></span>
+        <button type="button" data-wf-refresh title="Reload from the collector">⟳</button>
+        <button type="button" data-wf-close title="Close">✕</button>
+      </header>
+      <div class="wf-filters">
+        <button type="button" data-f="open">Open</button>
+        <button type="button" data-f="resolved">Resolved</button>
+        <button type="button" data-f="all">All</button>
+      </div>
+      <div class="wf-list"></div>`;
+    isolate(panel); // keep app-level click-outside handlers from eating our clicks
+    panel.querySelector('[data-wf-close]').addEventListener('click', () => togglePanel(false));
+    panel.querySelector('[data-wf-refresh]').addEventListener('click', () => refresh());
+    panel.querySelectorAll('.wf-filters button').forEach((b) =>
+      b.addEventListener('click', () => {
+        panelFilter = b.dataset.f;
+        try { localStorage.setItem(PANEL_FILTER_KEY, panelFilter); } catch { /* ignore */ }
+        renderPanel();
+      })
+    );
+  }
+
+  // The open state is remembered so that jumping to another page from the list
+  // (a full navigation) doesn't drop you out of the list you were working through.
+  function togglePanel(force) {
+    panelOpen = typeof force === 'boolean' ? force : !panel.classList.contains('open');
+    panel.classList.toggle('open', panelOpen);
+    badge.querySelector('.wf-open-panel').classList.toggle('off', !panelOpen);
+    try { localStorage.setItem(PANEL_OPEN_KEY, panelOpen ? '1' : '0'); } catch { /* ignore */ }
+    if (panelOpen) { renderPanel(); refresh(); }
+  }
+
+  function renderPanel() {
+    const list = panel.querySelector('.wf-list');
+    if (!list) return;
+    panel.querySelectorAll('.wf-filters button').forEach((b) =>
+      b.classList.toggle('on', b.dataset.f === panelFilter)
+    );
+
+    const here = normalizeUrl(location.href);
+    const shown = items.filter((f) => panelFilter === 'all' || f.status === panelFilter);
+    if (!shown.length) {
+      list.innerHTML = `<div class="wf-empty">No ${panelFilter === 'all' ? '' : panelFilter + ' '}feedback yet.<br>Shift+click the page to add some.</div>`;
+      return;
+    }
+
+    // Group by page, current page first so "what's wrong here" is at the top.
+    const groups = new Map();
+    shown.forEach((f) => {
+      const key = normalizeUrl(f.url);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(f);
+    });
+    const keys = Array.from(groups.keys()).sort((a, b) =>
+      a === here ? -1 : b === here ? 1 : a.localeCompare(b)
+    );
+
+    list.innerHTML = keys
+      .map((key) => {
+        const rows = groups
+          .get(key)
+          .map((f) => {
+            const done = f.status === 'resolved';
+            return `
+              <div class="wf-item${done ? ' done' : ''}" data-id="${f.id}" data-url="${escapeHtml(f.url)}"
+                   title="${escapeHtml(f.text)}">
+                <span class="wf-num">${f.number}</span>
+                <div class="wf-body">
+                  <div class="wf-text">${escapeHtml(f.text)}</div>
+                  <div class="wf-meta">${escapeHtml(timeAgo(f.created_at))}${
+                    done && f.resolution_note ? ' · ' + escapeHtml(f.resolution_note) : ''
+                  }</div>
+                </div>
+                <button class="wf-act" type="button" data-act="${done ? 'reopen' : 'resolve'}"
+                        title="${done ? 'Reopen' : 'Resolve (pin stays, turns green)'}">${done ? '↺' : '✓'}</button>
+              </div>`;
+          })
+          .join('');
+        const label =
+          key === here
+            ? `<span class="wf-here">● This page</span> — ${escapeHtml(shortPath(key))}`
+            : escapeHtml(shortPath(key));
+        return `<div class="wf-group">${label}</div>${rows}`;
+      })
+      .join('');
+
+    list.querySelectorAll('.wf-item').forEach((row) => {
+      const id = Number(row.dataset.id);
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('.wf-act')) return;
+        goToItem(id, row.dataset.url);
+      });
+      const act = row.querySelector('.wf-act');
+      act.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const resolve = act.dataset.act === 'resolve';
+        try {
+          await setStatus(id, resolve);
+          toast(resolve ? 'Resolved — pin stays green for verification' : 'Reopened');
+        } catch (err) {
+          toast('Update failed — is the collector running?');
+          console.warn('[web-feedback] status change failed:', err);
+        }
+      });
+    });
+  }
+
+  // Take the user to an item: scroll+flash if it's on this page, otherwise
+  // navigate to the page it was left on and flash it after load.
+  function goToItem(id, url) {
+    if (normalizeUrl(url) === normalizeUrl(location.href)) {
+      if (!focusMarker(id)) toast('That pin has no position on this page');
+      return;
+    }
+    try { sessionStorage.setItem(FLASH_KEY, String(id)); } catch { /* ignore */ }
+    location.href = url;
   }
 
   // ---- comment popover ----------------------------------------------------
@@ -745,7 +1170,7 @@
       }
 
       try {
-        const res = await fetch(CONFIG.server + '/feedback', {
+        const res = await api('/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -769,8 +1194,8 @@
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const saved = await res.json();
         count = saved.number;
-        placeMarker({ id: saved.id, number: saved.number, text, x: pageX, y: pageY });
-        badge.querySelector('b').textContent = count;
+        placeMarker({ id: saved.id, number: saved.number, text, x: pageX, y: pageY, status: 'open' });
+        refresh(); // re-sync the counts and the panel list with the new item
         toast(
           shot.error
             ? `Feedback #${saved.number} saved (no screenshot — see console)`
@@ -797,7 +1222,7 @@
     'click',
     (ev) => {
       if (!ev.shiftKey) return;
-      if (ev.target.closest('.wf-pop, .wf-badge, .wf-marker')) return;
+      if (ev.target.closest('.wf-pop, .wf-badge, .wf-marker, .wf-panel')) return;
       ev.preventDefault();
       ev.stopPropagation();
       openComment(ev);

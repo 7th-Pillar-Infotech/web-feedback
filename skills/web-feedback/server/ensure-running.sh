@@ -7,17 +7,13 @@
 #   - does nothing if the collector is already healthy
 #   - otherwise starts it detached (survives after this script exits)
 #
-# Env: PORT (default 4765). Logs to $FEEDBACK_HOME/collector.log (default
-# ~/.web-feedback) — a persistent, writable location, since the plugin's own
-# directory may be read-only or wiped on update.
+# Env: PORT (default 4765). Logs to collector.log next to this script.
 
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT="${PORT:-4765}"
-FEEDBACK_HOME="${FEEDBACK_HOME:-$HOME/.web-feedback}"
-mkdir -p "$FEEDBACK_HOME"
-LOG="$FEEDBACK_HOME/collector.log"
+LOG="$DIR/collector.log"
 cd "$DIR"
 
 # Already healthy? Nothing to do.

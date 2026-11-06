@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Claude Code plugins by 7th Pillar",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "web-feedback",
       "source": "./",
       "description": "In-browser visual feedback loop: Shift+click to comment on any spot, with screenshots, console logs, and network capture; Claude reads and resolves each item.",
-      "version": "1.0.0"
+      "version": "1.1.0"
     }
   ]
 }

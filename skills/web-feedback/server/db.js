@@ -4,33 +4,23 @@
  * Shared SQLite access for the web-feedback collector.
  * Used by both feedback-server.js (HTTP) and feedback-cli.js (Claude's CLI).
  *
- * The DB and screenshots live in a persistent per-user directory
- * (~/.web-feedback by default) rather than next to this file. That keeps feedback
- * intact across plugin updates — a plugin's install directory is cached and may be
- * wiped or read-only, so writing runtime data there would lose it. Override with:
- *   FEEDBACK_HOME  base directory for both     (default: ~/.web-feedback)
- *   FEEDBACK_DB    absolute path to the .db file (default: $FEEDBACK_HOME/feedback.db)
- *   FEEDBACK_DIR   directory for screenshots     (default: $FEEDBACK_HOME/screenshots)
+ * The DB file and screenshot directory can be relocated with env vars so a
+ * project can keep feedback local to itself instead of the global default:
+ *   FEEDBACK_DB   absolute path to the .db file   (default: ./feedback.db)
+ *   FEEDBACK_DIR  directory for saved screenshots (default: ./screenshots)
  */
 
 const path = require('path');
 const fs = require('fs');
-const os = require('os');
 const Database = require('better-sqlite3');
-
-const HOME_DIR = process.env.FEEDBACK_HOME
-  ? path.resolve(process.env.FEEDBACK_HOME)
-  : path.join(os.homedir(), '.web-feedback');
 
 const DB_PATH = process.env.FEEDBACK_DB
   ? path.resolve(process.env.FEEDBACK_DB)
-  : path.join(HOME_DIR, 'feedback.db');
+  : path.join(__dirname, 'feedback.db');
 
 const SHOTS_DIR = process.env.FEEDBACK_DIR
   ? path.resolve(process.env.FEEDBACK_DIR)
-  : path.join(HOME_DIR, 'screenshots');
-
-fs.mkdirSync(HOME_DIR, { recursive: true });
+  : path.join(__dirname, 'screenshots');
 
 fs.mkdirSync(SHOTS_DIR, { recursive: true });
 

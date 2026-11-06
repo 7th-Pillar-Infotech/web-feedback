@@ -22,11 +22,33 @@ click point, and sends everything to a local collector.
 page URL, project, click coordinates, CSS selector of the clicked element, the
 path to the annotated screenshot PNG, and a **debug snapshot** (recent console
 logs + network requests captured live when the note was left). A live counter badge
-(draggable, so it never blocks app buttons) shows the running count. Numbered pins
-are **per-URL**: each pin shows only on the page it was left on, is re-rendered on
-reload and on SPA (client-side) navigation, and disappears once the item is resolved.
-**Clicking a pin** reopens that feedback to **edit, resolve, or delete** it directly
-in the browser.
+sits in the corner — **collapsed to a small chip** (just 💬 and the open count) so it
+barely intrudes on the page, expanding on hover (or tap, for touch) to reveal the hint
+and its controls, and draggable so it never blocks app buttons. Expanded it reads
+`N open · M total`. Numbered pins
+are **per-URL**: each pin shows only on the page it was left on, and is re-rendered
+on reload and on SPA (client-side) navigation.
+**Clicking a pin** reopens that feedback to **edit, resolve/reopen, or delete** it
+directly in the browser.
+
+**Resolved items stay where they were left, in green.** A resolved pin is *not*
+removed — it turns green (open pins are red) and keeps its position so a human can
+verify the fix in place before the item is really retired. Clicking a green pin
+offers **Reopen** if the fix didn't land. This is deliberate: resolving is a
+"ready for verification" signal, not an erasure.
+
+**The badge has two controls** (visible once it's expanded):
+- **👁 / 🙈 — hide/show markers.** Pins can cover the very UI you want to look at,
+  so visibility is a one-click toggle, remembered across reloads (localStorage).
+  Being taken to a pin from the panel un-hides them automatically.
+- **☰ — the issues panel.** A right-hand side panel listing **every** item for the
+  project, filterable by **Open / Resolved / All** and grouped by the page it was
+  left on (the current page first, marked "● This page"). Each row shows the number,
+  the text (struck through when resolved), how long ago it was left, the resolution
+  note, and a one-click ✓ resolve / ↺ reopen button. **Clicking a row takes you to
+  the issue**: same page → scrolls to the pin and flashes it; another page →
+  navigates there and flashes the pin on arrival. The panel stays open across those
+  jumps so a list can be worked through end to end.
 
 **Screenshots are robust by default.** The widget captures with **snapdom**, served
 by the collector (`/vendor/snapdom.js`) — it renders through the browser's own engine,
@@ -59,11 +81,37 @@ it **resolved** in the same table.
 Files (this skill directory):
 - `server/ensure-running.sh` — idempotent auto-start (installs deps + starts collector); run this first
 - `server/feedback-server.js` — collector on `http://localhost:4765` (also serves the widget)
-- `server/feedback-cli.js` — the CLI you use to list / show / resolve feedback
+- `server/feedback-cli.js` — the CLI you use to list / show / resolve feedback (local **or** remote)
 - `server/db.js` — shared SQLite schema (table `feedback`)
+- `server-cf/` — the same collector as a Cloudflare Worker (D1 + R2)
 - `widget/feedback-widget.js` — the browser widget
+- `DEPLOY.md` — hosting the collector: local, VPS (systemd + nginx), or Cloudflare
 
 `SKILL_DIR` below = the directory containing this file.
+
+---
+
+## Setting the skill up on a project: ask where the collector runs
+
+The **first** time you wire this skill into a project, ask the user where the
+collector should live — it decides who can leave feedback, and you can't infer it
+from the code:
+
+| Answer | What it means | Setup |
+|---|---|---|
+| **Local** (default) | only the user, on their own machine, app on localhost | `bash "$SKILL_DIR/server/ensure-running.sh"` |
+| **VPS** | testers/clients on a deployed (UAT/staging) site | `DEPLOY.md` § VPS — systemd + nginx + certbot, `FEEDBACK_TOKEN` |
+| **Cloudflare Worker** | same, with no server to maintain | `DEPLOY.md` § Cloudflare — D1 + R2, `wrangler deploy` |
+
+Then **give them the deployment steps** from `DEPLOY.md` for the target they chose
+(and run the parts you can). If they just want to try it, default to Local and say
+that moving to a hosted collector later is only a URL change in the embed.
+
+For anything other than Local, also:
+- generate a token (`openssl rand -hex 24`) and set it on the collector — a public
+  collector without one is writable by anyone who finds it;
+- point the CLI at it with `FEEDBACK_SERVER` / `FEEDBACK_TOKEN` (see below);
+- tell the user the screenshots now live on that host, not their laptop.
 
 ---
 
@@ -74,8 +122,13 @@ Next.js, Astro, SvelteKit, CRA, etc.), embed the feedback widget **in the develo
 build only** and ensure it is **absent from production builds**. The widget must never
 ship to end users.
 
+The exception is a **deliberate UAT/staging deployment with a hosted collector** —
+that's the point of the VPS/Cloudflare targets. Gate that on an explicit env var
+(e.g. `NEXT_PUBLIC_FEEDBACK_SERVER`) that is set for the UAT environment and unset
+in production, so real production builds still render nothing.
+
 The widget is served by the collector, so embedding is a single tag pointed at
-`http://localhost:4765/feedback-widget.js`. Gate it behind a dev-only condition:
+`<collector>/feedback-widget.js`. Gate it behind a dev-only condition:
 
 **Plain HTML (dev file only):**
 ```html
@@ -102,10 +155,40 @@ if (import.meta.env.DEV) {
 
 **Generic guard for any bundler:** only inject when `NODE_ENV !== 'production'`.
 
-Optional per-project grouping — set before the script loads so feedback is filtered
-by a stable name instead of the host:
+### Configuring the widget from its own script tag
+
+Everything can ride on the `<script src>` query string, which is all a hosted
+collector needs — no inline config block:
+
 ```html
-<script>window.FEEDBACK_CONFIG = { project: 'my-app' };</script>
+<script src="https://feedback.example.com/feedback-widget.js?project=admin-app&token=SECRET" defer></script>
+```
+
+| Param | Meaning |
+|---|---|
+| `project` | grouping key for the `project` column (defaults to `location.host`) |
+| `token` | shared secret, sent as `X-Feedback-Token`; required if the collector has `FEEDBACK_TOKEN` set |
+| `server` | API base URL — only needed if the API isn't where the widget was served from |
+
+The collector base URL is otherwise **derived from the widget's own `src`**, so
+pointing an app at a different collector is a one-line change. The inline form
+still works and takes precedence:
+
+```html
+<script>window.FEEDBACK_CONFIG = { project: 'my-app', server: 'https://feedback.example.com', token: 'SECRET' };</script>
+```
+
+For a hosted collector, drive the URL from an env var so the same code is dev-safe
+and UAT-capable — e.g. in Next.js:
+
+```tsx
+const feedbackServer =
+  process.env.NEXT_PUBLIC_FEEDBACK_SERVER ||
+  (process.env.NODE_ENV !== "production" ? "http://localhost:4765" : "");
+...
+{feedbackServer && (
+  <script src={`${feedbackServer}/feedback-widget.js?project=my-app`} defer />
+)}
 ```
 
 When preparing a production build, confirm the widget tag/injection is stripped or
@@ -125,10 +208,20 @@ bash "$SKILL_DIR/server/ensure-running.sh"
 
 That is the only startup step — do not start `feedback-server.js` by hand. The
 collector listens on `http://localhost:4765`, serves the widget at
-`/feedback-widget.js`, and keeps its database, screenshots, and log in a persistent
-per-user directory (`~/.web-feedback/` by default) so feedback survives updates.
-Override the port with `PORT=... bash …/ensure-running.sh`; relocate the data dir
-with `FEEDBACK_HOME=/some/path` (or `FEEDBACK_DB` / `FEEDBACK_DIR` individually).
+`/feedback-widget.js`, stores screenshots under `server/screenshots/`, and logs to
+`server/collector.log`. Override the port with `PORT=... bash …/ensure-running.sh`.
+
+Env vars the collector understands: `PORT`, `HOST` (bind address — `127.0.0.1` to
+keep it off the network), `FEEDBACK_TOKEN` (require a shared secret on every data
+route), `FEEDBACK_DB`, `FEEDBACK_DIR`.
+
+**If the project uses a hosted collector, skip this** — nothing to start locally.
+Point the CLI at it instead:
+
+```bash
+export FEEDBACK_SERVER=https://feedback.example.com
+export FEEDBACK_TOKEN=THE_TOKEN
+```
 
 Then make sure the running app embeds the widget (see the rule above) and tell the
 user: **hold Shift and click anywhere on the page to leave feedback.**
@@ -137,8 +230,11 @@ user: **hold Shift and click anywhere on the page to leave feedback.**
 
 ## Working through feedback (the resolve loop)
 
-Use the CLI (`node "$SKILL_DIR/server/feedback-cli.js" …`). It reads/writes the SQLite
-DB directly, so it works even if the server process is stopped.
+Use the CLI (`node "$SKILL_DIR/server/feedback-cli.js" …`). By default it reads/writes
+the local SQLite DB directly, so it works even if the server process is stopped. Set
+`FEEDBACK_SERVER` (+ `FEEDBACK_TOKEN`), or pass `--server` / `--token`, and the same
+commands run against a hosted collector over HTTP — remote screenshots are downloaded
+to `server/screenshots/remote/` so `screenshot_abs` is still a file you can Read.
 
 1. **List what's open** (optionally scope to one project):
    ```bash
@@ -171,7 +267,8 @@ DB directly, so it works even if the server process is stopped.
 
 Work items in order (`list` is sorted by feedback number). Resolve an item **only
 after** the fix is actually in place — resolving is the signal that the feedback is
-handled.
+handled. The pin stays on the page in **green** after you resolve it, so the user can
+verify your fix at the exact spot it was reported and `reopen` it if it isn't right.
 
 ## Editing and deleting feedback
 

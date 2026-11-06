@@ -1,0 +1,18 @@
+{
+  "name": "web-feedback-collector-cf",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Cloudflare Worker edition of the web-feedback collector (D1 + R2)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "npm run build && wrangler dev",
+    "predeploy": "node build.mjs",
+    "deploy": "wrangler deploy",
+    "migrate": "wrangler d1 execute web-feedback --remote --file=./migrations/0001_schema.sql",
+    "migrate:local": "wrangler d1 execute web-feedback --local --file=./migrations/0001_schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

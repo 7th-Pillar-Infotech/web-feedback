@@ -21,6 +21,13 @@ const path = require('path');
 const { db, SHOTS_DIR, nextNumber } = require('./db');
 
 const PORT = Number(process.env.PORT) || 4765;
+// Bind address. Defaults to all interfaces (what a VPS behind nginx wants);
+// set HOST=127.0.0.1 to keep a local collector off the network entirely.
+const HOST = process.env.HOST || '0.0.0.0';
+// Shared secret. When set, every data route requires it (header
+// X-Feedback-Token or ?token=). Unset = open, which is fine on localhost and
+// NOT fine on a public host.
+const TOKEN = process.env.FEEDBACK_TOKEN || '';
 const WIDGET_FILE = path.join(__dirname, '..', 'widget', 'feedback-widget.js');
 
 function nowIso() {
@@ -31,7 +38,7 @@ function send(res, status, body, headers = {}) {
   const base = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Feedback-Token',
   };
   res.writeHead(status, { ...base, ...headers });
   res.end(body);
@@ -257,6 +264,19 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'OPTIONS') return send(res, 204, '');
 
+  // Public routes: the widget bundle, the capture engines, and health. Everything
+  // else is data and requires the token when one is configured. Timing-safe
+  // comparison isn't warranted for a dev-feedback shared secret, but a
+  // length check first avoids the obvious empty-string bypass.
+  const isPublicRoute =
+    url.pathname === '/health' ||
+    url.pathname === '/feedback-widget.js' ||
+    parts[0] === 'vendor';
+  if (TOKEN && !isPublicRoute) {
+    const given = req.headers['x-feedback-token'] || url.searchParams.get('token') || '';
+    if (given !== TOKEN) return sendJson(res, 401, { error: 'unauthorized' });
+  }
+
   try {
     // GET /health
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -326,8 +346,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  process.stdout.write(`web-feedback collector listening on http://localhost:${PORT}\n`);
+server.listen(PORT, HOST, () => {
+  process.stdout.write(`web-feedback collector listening on http://${HOST}:${PORT}\n`);
   process.stdout.write(`  widget:      http://localhost:${PORT}/feedback-widget.js\n`);
   process.stdout.write(`  screenshots: ${SHOTS_DIR}\n`);
+  process.stdout.write(`  auth:        ${TOKEN ? 'token required (FEEDBACK_TOKEN set)' : 'open (no token)'}\n`);
 });
